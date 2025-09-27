@@ -1,0 +1,71 @@
+datadog:
+  apiKey: bf33e4408946c04114a0f6de06544e58  # 실제 API 키로 변경
+  appKey: b8532a3181e3a811b632b321b2818b9717f3667d  # 실제 APP 키로 변경
+  
+  # APM 활성화 (중요!)
+  apm:
+    enabled: true
+    portEnabled: true
+    port: 8126  # APM 포트
+    useSocketVolume: false
+    socketEnabled: false
+    hostSocketPath: /var/run/datadog/
+    
+  # 로그 수집 활성화
+  logs:
+    enabled: true
+    containerCollectAll: true
+    containerCollectUsingFiles: true
+  
+  # 프로세스 모니터링
+  processAgent:
+    enabled: true
+    processCollection: true
+  
+  # 네트워크 성능 모니터링 (선택)
+  networkMonitoring:
+    enabled: true
+
+# DaemonSet 설정
+agents:
+  image:
+    tag: "latest"
+  
+  # APM 포트 노출 (중요!)
+  containers:
+    agent:
+      ports:
+        - containerPort: 8126
+          name: traceport
+          protocol: TCP
+  
+  # 리소스
+  resources:
+    requests:
+      cpu: 200m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+  
+  # APM 환경변수 추가
+  env:
+    - name: DD_APM_ENABLED
+      value: "true"
+    - name: DD_APM_NON_LOCAL_TRAFFIC
+      value: "true"  # 다른 Pod에서의 트래픽 허용
+    - name: DD_APM_RECEIVER_PORT
+      value: "8126"
+
+# Cluster Agent 설정  
+clusterAgent:
+  enabled: true
+  replicas: 2
+  
+  # 메트릭 프로바이더
+  metricsProvider:
+    enabled: true
+    
+  # RBAC
+  rbac:
+    create: true

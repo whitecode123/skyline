@@ -1,0 +1,172 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: skyline-app
+  labels:
+    app: skyline
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: skyline
+  template:
+    metadata:
+      labels:
+        app: skyline
+        tags.datadoghq.com/env: "production"
+        tags.datadoghq.com/service: "skyline-app"
+        tags.datadoghq.com/version: "1.0.0"
+      annotations:
+        # 로그 수집 활성화
+        ad.datadoghq.com/skyline.logs: '[{
+          "source": "java",
+          "service": "skyline-app",
+          "tags": ["env:production"],
+          "log_processing_rules": [{
+            "type": "multi_line",
+            "name": "log_start_with_date",
+            "pattern": "\\d{4}-\\d{2}-\\d{2}"
+          }]
+        }]'
+    spec:
+      serviceAccountName: skyline-asa
+      
+      # Init Container: Datadog Java Agent 다운로드
+      initContainers:
+      - name: download-dd-agent
+        image: alpine/curl:latest
+        command: 
+        - sh
+        - -c
+        - |
+          echo "Downloading Datadog Java Agent..."
+          curl -L -o /dd-agent/dd-java-agent.jar https://dtdg.co/latest-java-tracer
+          echo "Download complete!"
+          ls -la /dd-agent/
+        volumeMounts:
+        - name: dd-agent-volume
+          mountPath: /dd-agent
+      
+      # 메인 애플리케이션 컨테이너
+      containers:
+      - name: skyline
+        image: 646558765106.dkr.ecr.ap-northeast-2.amazonaws.com/skyline/rjs:latest3
+        ports:
+        - containerPort: 8080
+          name: http
+        
+        # Volume Mount: Init Container에서 다운로드한 Agent
+        volumeMounts:
+        - name: dd-agent-volume
+          mountPath: /dd-agent
+          readOnly: true
+        
+        # 환경 변수 설정
+        env:
+        # Java Agent 경로와 JVM 옵션 설정
+        - name: JAVA_TOOL_OPTIONS
+          value: "-javaagent:/dd-agent/dd-java-agent.jar -Xmx768m -Xms512m"
+        
+        # Datadog APM 설정
+        - name: DD_ENV
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.labels['tags.datadoghq.com/env']
+        - name: DD_SERVICE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.labels['tags.datadoghq.com/service']
+        - name: DD_VERSION
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.labels['tags.datadoghq.com/version']
+        
+        # Datadog Agent 호스트 설정
+        - name: DD_AGENT_HOST
+          valueFrom:
+            fieldRef:
+              fieldPath: status.hostIP
+        
+        # APM 활성화 설정
+        - name: DD_TRACE_ENABLED
+          value: "true"
+        - name: DD_LOGS_INJECTION
+          value: "true"
+        - name: DD_PROFILING_ENABLED
+          value: "true"
+        - name: DD_TRACE_SAMPLE_RATE
+          value: "1.0"  # 100% 샘플링 (프로덕션에서는 조정 필요)
+        - name: DD_TRACE_AGENT_PORT
+          value: "8126"
+        
+        # JMX 메트릭 수집 (선택사항)
+        - name: DD_JMXFETCH_ENABLED
+          value: "true"
+        - name: DD_JMXFETCH_STATSD_PORT
+          value: "8125"
+        
+        # 로그 레벨 설정
+        - name: DD_TRACE_DEBUG
+          value: "false"  # 디버깅 시 true로 변경
+        
+        # Spring Boot 애플리케이션 이름
+        - name: SPRING_APPLICATION_NAME
+          value: "skyline-app"
+        
+        # 기존 DB 설정
+        - name: DB_HOST
+          valueFrom:
+            secretKeyRef:
+              name: skyline-db-secret
+              key: DB_HOST
+        - name: DB_PORT
+          value: "3306"
+        - name: DB_NAME
+          valueFrom:
+            secretKeyRef:
+              name: skyline-db-secret
+              key: DB_NAME
+        - name: DB_USER
+          valueFrom:
+            secretKeyRef:
+              name: skyline-db-secret
+              key: DB_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: skyline-db-secret
+              key: DB_PASSWORD
+        - name: DB_CONNECTION_POOL_SIZE
+          value: "10"
+        
+        # 헬스체크
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /ready
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 3
+          failureThreshold: 3
+        
+        # 리소스 설정
+        resources:
+          requests:
+            memory: "512Mi"
+            cpu: "250m"
+          limits:
+            memory: "1Gi"
+            cpu: "500m"
+      
+      # Volume 정의: emptyDir을 사용하여 Init Container와 공유
+      volumes:
+      - name: dd-agent-volume
+        emptyDir: {}
